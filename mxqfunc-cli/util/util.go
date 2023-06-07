@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var FundsArray [][]string
@@ -58,6 +60,7 @@ func init() {
 const (
 	fundValueApi    = "http://fundgz.1234567.com.cn/js/"
 	historyValueApi = "http://fund.eastmoney.com/f10/F10DataApi.aspx?type=lsjz&code="
+	DefaultDays     = "30"
 	// code=110022&sdate=2018-02-22&edate=2018-03-02&per=20
 )
 
@@ -81,6 +84,74 @@ func GetValueByCode(code string) (string, string) {
 	return GetColorStr(f), t.Gztime
 }
 
+type TopStruct struct {
+	Code  string
+	Name  string
+	Time  string
+	Value float64
+}
+
+func PrintTop(num int) {
+	var tmpRes []*TopStruct
+	fmt.Println(time.Now().Format("2006-01-02 15:04:05"), "开始计算，预计需要耗时", len(FundsArray)/10, "秒")
+	var tB = time.Now()
+	for _, code := range FundsArray {
+		resp, err := http.Get(fundValueApi + code[0] + ".js?")
+		if err != nil {
+			continue
+		}
+
+		s, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(s), "dwjz") {
+			continue
+		}
+		var t FundValue
+		err = json.Unmarshal(s[8:len(s)-2], &t)
+		if err != nil {
+			continue
+		}
+		f, _ := strconv.ParseFloat(t.Gszzl, 32)
+
+		tmpRes = append(tmpRes, &TopStruct{
+			Code:  code[0],
+			Name:  code[2],
+			Time:  t.Gztime,
+			Value: f,
+		})
+	}
+	sort.Slice(tmpRes, func(i, j int) bool {
+		if tmpRes[i].Value > tmpRes[j].Value {
+			return true
+		}
+		return false
+	})
+	fmt.Println("计算已完成，共用时:", time.Since(tB))
+
+	table := simpletable.New()
+
+	table.Header = &simpletable.Header{
+		Cells: []*simpletable.Cell{
+			{Align: simpletable.AlignCenter, Text: "基金编号"},
+			{Align: simpletable.AlignCenter, Text: "基金名称"},
+			{Align: simpletable.AlignCenter, Text: "时间"},
+			{Align: simpletable.AlignCenter, Text: "净值(%)"},
+		},
+	}
+
+	for _, v := range tmpRes[:num] {
+		r := []*simpletable.Cell{
+			{Align: simpletable.AlignCenter, Text: v.Code},
+			{Align: simpletable.AlignCenter, Text: v.Name},
+			{Align: simpletable.AlignCenter, Text: v.Time},
+			{Align: simpletable.AlignCenter, Text: GetColorStr(v.Value)},
+		}
+		table.Body.Cells = append(table.Body.Cells, r)
+	}
+	table.SetStyle(simpletable.StyleRounded)
+	fmt.Println(table.String())
+
+}
+
 func GetColorStr(f float64) string {
 	var tmpShowValue string
 	if f > 0 {
@@ -91,10 +162,10 @@ func GetColorStr(f float64) string {
 	return tmpShowValue
 }
 
-func GetHistoryByCode(code string) ([]float64, string) {
-	resp, err := http.Get(historyValueApi + code)
+func GetHistoryByCode(code string, days string) ([]float64, []float64, string) {
+	resp, err := http.Get(historyValueApi + code + "&per=" + days)
 	if err != nil {
-		return []float64{}, ""
+		return []float64{}, []float64{}, ""
 	}
 	s, _ := io.ReadAll(resp.Body)
 	ds := strings.Split(string(s), "<td>")
@@ -109,12 +180,14 @@ func GetHistoryByCode(code string) ([]float64, string) {
 			{Align: simpletable.AlignCenter, Text: "上涨/回调累计(%)"},
 		},
 	}
+
 	last := float64(0)
 	jur := float64(0)
 	subtotal := float64(0)
 	d := 0
 	date11 := ""
 	date12 := ""
+	var shouldAddLast bool
 	var allday = 0
 	for i, dd := range ds[1 : len(ds)-2] {
 		if strings.Contains(dd, "tor bold") {
@@ -156,11 +229,7 @@ func GetHistoryByCode(code string) ([]float64, string) {
 				d = 1
 
 				if i == len(ds[1:len(ds)-2])-1 {
-					r = []*simpletable.Cell{
-						{Align: simpletable.AlignCenter, Text: date11 + "~" + date11},
-						{Align: simpletable.AlignCenter, Text: strconv.Itoa(d)},
-						{Align: simpletable.AlignCenter, Text: GetColorStr(jur)},
-					}
+					shouldAddLast = true
 				}
 				table.Body.Cells = append(table.Body.Cells, r)
 			}
@@ -168,6 +237,14 @@ func GetHistoryByCode(code string) ([]float64, string) {
 			date12 = fs[0]
 
 		}
+	}
+	if shouldAddLast {
+		r := []*simpletable.Cell{
+			{Align: simpletable.AlignCenter, Text: date11 + "~" + date11},
+			{Align: simpletable.AlignCenter, Text: strconv.Itoa(d)},
+			{Align: simpletable.AlignCenter, Text: GetColorStr(jur)},
+		}
+		table.Body.Cells = append(table.Body.Cells, r)
 	}
 	table.Footer = &simpletable.Footer{
 		Cells: []*simpletable.Cell{
@@ -177,8 +254,12 @@ func GetHistoryByCode(code string) ([]float64, string) {
 		},
 	}
 	table.SetStyle(simpletable.StyleRounded)
-
-	return vf, table.String()
+	var junZhi []float64
+	junT := subtotal / float64(len(vf))
+	for i := 0; i < len(vf); i++ {
+		junZhi = append(junZhi, junT)
+	}
+	return vf, junZhi, table.String()
 }
 
 //上涨/回调日期

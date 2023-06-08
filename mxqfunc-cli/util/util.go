@@ -24,16 +24,24 @@ type FundValue struct {
 
 var (
 	SelectedFundsViper = viper.New()
+	TopFundsViper      = viper.New()
 )
 
 const (
 	SelectedFundsFile = "selectedfund.json"
+	TopFundsFile      = "topfunds.json"
 	SelectedFundsKey  = "selectedFunds"
+	TopFundsKey       = "topFunds"
 )
 
 func init() {
 	SelectedFundsViper.SetConfigFile(SelectedFundsFile)
 	if err := SelectedFundsViper.ReadInConfig(); err != nil {
+		fmt.Println(err)
+	}
+
+	TopFundsViper.SetConfigFile(TopFundsFile)
+	if err := TopFundsViper.ReadInConfig(); err != nil {
 		fmt.Println(err)
 	}
 
@@ -137,7 +145,6 @@ func PrintTop(num int) {
 			{Align: simpletable.AlignCenter, Text: "净值(%)"},
 		},
 	}
-
 	for _, v := range tmpRes[:num] {
 		r := []*simpletable.Cell{
 			{Align: simpletable.AlignCenter, Text: v.Code},
@@ -149,7 +156,8 @@ func PrintTop(num int) {
 	}
 	table.SetStyle(simpletable.StyleRounded)
 	fmt.Println(table.String())
-
+	TopFundsViper.Set(TopFundsKey, tmpRes[:num])
+	TopFundsViper.WriteConfigAs(TopFundsFile)
 }
 
 func GetColorStr(f float64) string {
